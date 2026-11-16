@@ -3067,6 +3067,7 @@ dependencies = [
  "sex-fetch",
  "sex-pdx",
  "talc",
+ "zeroize",
 ]
 
 [[package]]
@@ -3112,6 +3113,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sex-shape"
+version = "0.1.0"
+
+[[package]]
 name = "sex-std"
 version = "0.1.0"
 dependencies = [
@@ -3131,6 +3136,7 @@ dependencies = [
  "miniz_oxide 0.8.9",
  "regex-automata",
  "sex-font",
+ "sex-shape",
  "vte",
 ]
 
