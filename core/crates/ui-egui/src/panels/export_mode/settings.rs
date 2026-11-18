@@ -71,9 +71,9 @@ fn combo_tips(
     chosen
 }
 
-/// Why a format cannot be exported on this machine, or None when it can. H.265 and AV1 have no
-/// software encoder: without a hardware one (NVENC on NVIDIA, VideoToolbox on macOS) they are
-/// greyed out with the reason, instead of failing at export time.
+/// Why a format cannot be exported on this machine, or None when it can. H.265 has no software
+/// encoder: without a hardware one (NVENC on NVIDIA, VideoToolbox on macOS) it is greyed out with
+/// the reason, instead of failing at export time.
 fn unavailable_why(format: Format) -> Option<&'static str> {
     if filmcraft_engine::export::available(format) {
         return None;
@@ -82,7 +82,6 @@ fn unavailable_why(format: Format) -> Option<&'static str> {
         Format::Hevc => tl!(
             "H.265 (HEVC) needs a hardware encoder (NVENC on NVIDIA GPUs, VideoToolbox on macOS); none was found on this machine, and Splicy has no software H.265 encoder yet. Choose H.264 or ProRes instead."
         ),
-        Format::Av1 => tl!("AV1 needs a hardware encoder; none was found on this machine, and Splicy has no software AV1 encoder yet."),
         _ => tl!("Not supported by Splicy's encoders yet"),
     })
 }
@@ -503,13 +502,17 @@ fn video_section(ui: &mut egui::Ui, reg: &mut Reg, s: &mut ExportSettings, t: &T
         }
     }
     match s.video_format() {
-        f @ (Format::H264 | Format::Hevc | Format::Av1) => {
-            // H.265 and AV1: hardware encoders only (one profile, level chosen by the encoder)
+        f @ (Format::H264 | Format::Hevc | Format::Av1 | Format::Webm) => {
+            // H.265: hardware encoders only; AV1 and VP9: Splicy's own encoders, one pass, bitrate
+            // controlled (one profile, level chosen by the encoder)
             let hevc = f != Format::H264;
             if hevc {
                 if f == Format::Av1 {
                     row(ui, t, tl!("Profile"), |ui| ui.label(tl!("Main (8-bit)")));
-                    row(ui, t, tl!("Encoder"), |ui| ui.label(tl!("Hardware (AV1 has no software encoder)")));
+                    row(ui, t, tl!("Encoder"), |ui| ui.label(tl!("Splicy AV1 (software)")));
+                } else if f == Format::Webm {
+                    row(ui, t, tl!("Profile"), |ui| ui.label(tl!("VP9 Profile 0 (8-bit)")));
+                    row(ui, t, tl!("Encoder"), |ui| ui.label(tl!("Splicy VP9 (software)")));
                 } else {
                     // the hardware encoder writes Main (8-bit 4:2:0), or Main 10 for HDR sequences where it can; level chosen by the encoder
                     let label = match (filmcraft_engine::export::hdr_available(Format::Hevc), seq_hdr && !s.sdr) {
@@ -685,9 +688,10 @@ fn audio_section(ui: &mut egui::Ui, reg: &mut Reg, s: &mut ExportSettings, t: &T
         }
     }
     row(ui, t, tl!("Audio Format"), |ui| {
-        let fixed = audio_only || s.format.is_mxf();
+        let fixed = audio_only || s.format.is_mxf() || s.format.has_opus_audio();
         let cur = match s.audio_codec() {
             AudioCodec::Aac => "AAC",
+            AudioCodec::Opus => "Opus",
             AudioCodec::Mp3 => "MP3",
             AudioCodec::Flac => tl!("FLAC (lossless)"),
             _ => tl!("Uncompressed (PCM)"),
@@ -705,6 +709,10 @@ fn audio_section(ui: &mut egui::Ui, reg: &mut Reg, s: &mut ExportSettings, t: &T
         }
     });
     row(ui, t, tl!("Sample Rate"), |ui| {
+        if s.format.has_opus_audio() {
+            ui.label(tl!("48000 Hz (Opus)"));
+            return;
+        }
         let rates: [Option<u32>; 5] = [None, Some(32_000), Some(44_100), Some(48_000), Some(96_000)];
         let lab = |r: &Option<u32>| r.map(|r| format!("{r} Hz")).unwrap_or_else(|| tlf!("Match Source ({seq_sr} Hz)", seq_sr));
         let labels: Vec<(String, bool)> = rates.iter().map(|r| (lab(r), true)).collect();
@@ -723,10 +731,15 @@ fn audio_section(ui: &mut egui::Ui, reg: &mut Reg, s: &mut ExportSettings, t: &T
             s.audio.channels = [1, 2, 6][i.min(2)];
         }
     });
-    if matches!(s.audio_codec(), AudioCodec::Aac | AudioCodec::Mp3) {
+    if matches!(s.audio_codec(), AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Opus) {
         row(ui, t, tl!("Audio Bitrate"), |ui| {
-            // MP3 bit rates are Layer III's (16-24 kHz streams stop at 160 kbps)
-            let rates: &[u32] = if s.audio_codec() == AudioCodec::Mp3 { &[64, 96, 128, 160, 192, 256, 320] } else { &[128, 160, 192, 256, 320] };
+            // MP3 bit rates are Layer III's (16-24 kHz streams stop at 160 kbps); Opus tops out at
+            // 96 kbps a channel
+            let rates: &[u32] = match s.audio_codec() {
+                AudioCodec::Mp3 => &[64, 96, 128, 160, 192, 256, 320],
+                AudioCodec::Opus => &[64, 96, 128, 160, 192],
+                _ => &[128, 160, 192, 256, 320],
+            };
             let labels: Vec<(String, bool)> = rates.iter().map(|r| (format!("{r} kbps"), true)).collect();
             if let Some(&r) = combo(ui, reg, "export.audio.bitrate", &format!("{} kbps", s.audio.bitrate_kbps), &labels, 120.0).and_then(|i| rates.get(i)) {
                 s.audio.bitrate_kbps = r;

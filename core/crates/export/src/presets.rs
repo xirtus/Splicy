@@ -129,6 +129,18 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
         p("Match Source – Adaptive Low Bitrate", ms, "H.264 at the sequence's frame size and rate; 0.05 bits per pixel", adaptive(0.05)),
         p("High Quality 1080p HD", web, "H.264 1920×1080, VBR 1 pass, 20 Mbps target, AAC 320 kbps", h264(Some((1920, 1080)), 20_000, 24_000)),
         p("High Quality 2160p 4K", web, "H.264 3840×2160, VBR 1 pass, 60 Mbps target, AAC 320 kbps", h264(Some((3840, 2160)), 60_000, 72_000)),
+        p(
+            "WebM 1080p (VP9 + Opus)",
+            web,
+            "WebM 1920×1080, VP9 VBR 1 pass, 8 Mbps, Opus 192 kbps: royalty-free, plays in every browser",
+            ExportSettings { format: Format::Webm, audio: AudioSettings { bitrate_kbps: 192, ..h264(None, 0, 0).audio }, ..h264(Some((1920, 1080)), 8_000, 10_000) },
+        ),
+        p(
+            "AV1 1080p (MP4)",
+            web,
+            "MP4 1920×1080, AV1 VBR 1 pass, 6 Mbps, Opus 192 kbps: royalty-free and the smallest files",
+            ExportSettings { format: Format::Av1, audio: AudioSettings { bitrate_kbps: 192, ..h264(None, 0, 0).audio }, ..h264(Some((1920, 1080)), 6_000, 8_000) },
+        ),
         p("YouTube 1080p Full HD", web, "H.264 1920×1080 for video sharing sites, VBR 1 pass, 16 Mbps", h264(Some((1920, 1080)), 16_000, 20_000)),
         p("YouTube 2160p 4K Ultra HD", web, "H.264 3840×2160 for video sharing sites, VBR 1 pass, 45 Mbps", h264(Some((3840, 2160)), 45_000, 54_000)),
         p(

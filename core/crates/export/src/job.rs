@@ -71,6 +71,7 @@ use rayon::prelude::*;
 
 use crate::audio_out::AudioOut;
 use crate::mxf_out::{MxfMux, MxfSetup};
+use crate::open_formats::{OpusAudio, WebmMux};
 use crate::pipeline::Pipeline;
 use crate::settings::{AudioCodec, BitrateMode, HardwareEncoding};
 use crate::{
@@ -185,6 +186,8 @@ pub struct Exporter {
     mux: Option<Mp4Writer<Out>>,
     /// MXF exports write through this instead of `mux`.
     mxf: Option<MxfMux>,
+    /// WebM exports write through this instead of `mux`.
+    webm: Option<WebmMux>,
     seq: ItemId,
     project: Arc<Project>,
     vt: usize,
@@ -196,7 +199,16 @@ pub struct Exporter {
 pub fn stepped(format: Format) -> bool {
     matches!(
         format,
-        Format::H264 | Format::Hevc | Format::Av1 | Format::ProRes | Format::DnxHr | Format::Apv | Format::Mjpeg | Format::MxfOp1a | Format::MxfOpAtom
+        Format::H264
+            | Format::Hevc
+            | Format::Av1
+            | Format::Webm
+            | Format::ProRes
+            | Format::DnxHr
+            | Format::Apv
+            | Format::Mjpeg
+            | Format::MxfOp1a
+            | Format::MxfOpAtom
     )
 }
 
@@ -317,6 +329,7 @@ impl Exporter {
                 Some(found.ok_or_else(|| ExportError::Unsupported("AAC encoder not available".into()))??)
             }
             (Some(a), AudioCodec::Flac) => Some(Box::new(crate::FlacAudio::new(a.sr, a.channels as u32, &settings)?)),
+            (Some(a), AudioCodec::Opus) => Some(Box::new(OpusAudio::new(a.channels as u32, &settings)?)),
             _ => None,
         };
         let measured = !settings.effects.loudness.enabled || audio.is_none();
@@ -340,6 +353,7 @@ impl Exporter {
             queued: Vec::new(),
             mux: None,
             mxf: None,
+            webm: None,
             seq,
             project: project.clone(),
             vt: 0,
@@ -408,6 +422,12 @@ impl Exporter {
                 None => Ok(()),
             };
         }
+        if let Some(m) = self.webm.as_mut() {
+            return match (self.aenc.as_mut(), planar) {
+                (Some(a), Some(buf)) if buf.first().is_some_and(|c| !c.is_empty()) => m.write_audio(a.encode(&buf)?),
+                _ => Ok(()),
+            };
+        }
         let (Some(at), Some(buf)) = (self.at, planar) else { return Ok(()) };
         let n = buf.first().map_or(0, Vec::len);
         if n == 0 {
@@ -436,6 +456,9 @@ impl Exporter {
         if let Some(m) = self.mxf.as_mut() {
             return m.write_video(packets);
         }
+        if let Some(m) = self.webm.as_mut() {
+            return m.write_video(packets);
+        }
         let mux = self.mux.as_mut().ok_or_else(|| ExportError::Encode("internal: the container writer was not created".into()))?;
         for p in packets {
             mux.write_sample(self.vt, WriteSample { data: &p.data, duration: p.duration, composition_offset: p.composition_offset, is_sync: p.key })
@@ -461,6 +484,16 @@ impl Exporter {
                 audio: self.audio.as_ref().map(|a| (a.sr, a.channels)),
                 timecode: (start, q.settings.drop_frame),
             })?);
+            return Ok(());
+        }
+        if self.settings.format == Format::Webm {
+            let opus = self.aenc.as_ref().and_then(|a| match a.sample_entry().codec {
+                filmcraft_isobmff::CodecConfig::Opus(cfg) => Some(cfg),
+                _ => None,
+            });
+            let audio = self.audio.as_ref().zip(opus).map(|(a, cfg)| (a.channels as u32, cfg));
+            let title = Some(self.settings.metadata.title.clone()).filter(|t| !t.is_empty());
+            self.webm = Some(WebmMux::new(Out::create(&self.settings)?, self.pipe.w, self.pipe.h, self.pipe.rate, audio, title)?);
             return Ok(());
         }
         let file = Out::create(&self.settings)?;
@@ -538,13 +571,16 @@ impl Exporter {
         if filmcraft_media::pending::take() {
             return Ok(Step::Pending);
         }
-        if self.mux.is_none() && self.mxf.is_none() {
+        if self.mux.is_none() && self.mxf.is_none() && self.webm.is_none() {
             self.open_mux()?;
         }
         let mut tail = std::mem::take(&mut self.queued);
         tail.extend(self.venc.flush()?);
         self.write_video(tail)?;
         self.write_audio(mixed)?;
+        if let (Some(m), Some(a)) = (self.webm.as_mut(), self.aenc.as_mut()) {
+            m.write_audio(a.flush()?)?;
+        }
         if let (Some(at), Some(a)) = (self.at, self.aenc.as_mut()) {
             let mux = self.mux.as_mut().ok_or_else(|| ExportError::Encode("internal: the container writer was not created".into()))?;
             for (au, duration) in a.flush_timed()? {
@@ -554,9 +590,10 @@ impl Exporter {
                 mux.set_sample_entry(at, entry).map_err(|e| ExportError::Io(e.to_string()))?;
             }
         }
-        let (bytes, extra_files) = match self.mxf.take() {
-            Some(m) => m.finish(&self.settings)?,
-            None => {
+        let (bytes, extra_files) = match (self.mxf.take(), self.webm.take()) {
+            (Some(m), _) => m.finish(&self.settings)?,
+            (None, Some(m)) => (m.finish(&self.settings)?, Vec::new()),
+            (None, None) => {
                 let mux = self.mux.take().ok_or_else(|| ExportError::Encode("internal: the container writer was not created".into()))?;
                 // Upload services and progressive players need the MP4 metadata before media.
                 // The muxer relocates data in bounded chunks and adjusts every sample offset.
@@ -681,7 +718,7 @@ impl Exporter {
             self.queued.extend(packets);
             if cuts.contains(&(fi + 1)) {
                 timed(Stage::Mux, || -> Result<()> {
-                    if self.mux.is_none() && self.mxf.is_none() {
+                    if self.mux.is_none() && self.mxf.is_none() && self.webm.is_none() {
                         self.open_mux()?;
                     }
                     let packets = std::mem::take(&mut self.queued);

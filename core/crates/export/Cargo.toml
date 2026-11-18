@@ -8,13 +8,16 @@ rust-version = "1.95"
 
 [dependencies]
 craft-audio = {version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "156b491b91f3693f4fce53bf69bb97791f51198f", default-features = false, features = ["aac-decode", "aac-encode", "rayon", "ac3-decode", "mpa-decode", "mp3-decode", "decode-native", "symphonia", "opus-decode", "flac-encode", "mp3-encode"]}
-craft-video = {version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "156b491b91f3693f4fce53bf69bb97791f51198f", features = ["h264-decode", "h264-encode", "hevc-decode", "vp9-decode", "av1-decode", "vp8-decode", "mpeg2", "apv", "prores", "threads"]}
+craft-video = {version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "156b491b91f3693f4fce53bf69bb97791f51198f", features = ["h264-decode", "h264-encode", "hevc-decode", "vp9-decode", "vp9-encode", "av1-decode", "av1-encode", "vp8-decode", "mpeg2", "apv", "prores", "threads"]}
 filmcraft-time = {path = "../time"}
 filmcraft-frame = {path = "../frame"}
 filmcraft-color = {path = "../color"}
 filmcraft-media = {path = "../media"}
-craft-media = {version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "156b491b91f3693f4fce53bf69bb97791f51198f", default-features = false, features = ["mxf"]}
+craft-media = {version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "156b491b91f3693f4fce53bf69bb97791f51198f", default-features = false, features = ["mxf", "matroska"]}
 filmcraft-codecs = {path = "../codecs"}
+# Splicy's Opus encoder for WebM and AV1 MP4 sound: the pure-Rust encoder craft-libs gained after
+# the revision above (opus-encode only, so nothing else of this newer revision is built).
+craft-audio-opus = { package = "craft-audio", git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890", default-features = false, features = ["opus-encode"] }
 filmcraft-project = {path = "../project"}
 filmcraft-render = {path = "../render"}
 filmcraft-audio-dsp = {path = "../audio-dsp"}

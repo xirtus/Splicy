@@ -18,10 +18,14 @@ pub enum Format {
     /// ([`hdr_available`]); elsewhere they are tone-mapped to SDR.
     #[serde(rename = "hevc", alias = "Hevc")]
     Hevc,
-    /// MPEG-4, AV1 Main (8-bit) video + AAC audio. Like H.265 it has no built-in encoder: offered
-    /// where a hardware encoder registers one.
+    /// MPEG-4, AV1 Main (8-bit) video + Opus audio, from Splicy's own software AV1 encoder (a
+    /// registered hardware encoder is tried first).
     #[serde(rename = "av1", alias = "Av1")]
     Av1,
+    /// WebM: VP9 profile 0 (8-bit 4:2:0) video + Opus audio, from Splicy's own encoders.
+    /// Royalty-free, and what browsers play everywhere.
+    #[serde(rename = "webm", alias = "Webm")]
+    Webm,
     /// QuickTime, Apple ProRes 422 (HQ unless the settings pick another flavour) + PCM.
     #[serde(rename = "prores", alias = "ProRes")]
     ProRes,
@@ -88,6 +92,7 @@ impl Format {
             "h264" | "mp4" | "avc" | "m4v" => Format::H264,
             "hevc" | "h265" | "hvc1" | "hev1" | "x265" => Format::Hevc,
             "av1" | "av01" => Format::Av1,
+            "webm" | "vp9" | "vp09" => Format::Webm,
             "prores" | "mov" | "appleprores" => Format::ProRes,
             "dnxhr" | "dnxhd" | "dnx" | "avid" | "aviddnxhr" | "aviddnxhd" | "vc3" => Format::DnxHr,
             "apv" | "apv1" => Format::Apv,
@@ -117,6 +122,7 @@ impl Format {
             Format::H264 => "h264",
             Format::Hevc => "hevc",
             Format::Av1 => "av1",
+            Format::Webm => "webm",
             Format::ProRes => "prores",
             Format::DnxHr => "dnxhr",
             Format::Apv => "apv",
@@ -141,6 +147,7 @@ impl Format {
     pub fn extension(self) -> &'static str {
         match self {
             Format::H264 | Format::Hevc | Format::Av1 => "mp4",
+            Format::Webm => "webm",
             Format::ProRes | Format::DnxHr | Format::Apv | Format::Mjpeg => "mov",
             Format::PngSequence => "png",
             Format::TiffSequence => "tif",
@@ -163,6 +170,7 @@ impl Format {
             Format::H264 => "H.264",
             Format::Hevc => "H.265 (HEVC)",
             Format::Av1 => "AV1",
+            Format::Webm => "WebM (VP9)",
             Format::ProRes => "Apple ProRes",
             Format::DnxHr => "Avid DNxHR",
             Format::Apv => "APV",
@@ -204,7 +212,7 @@ impl Format {
     /// Whether the crate carries an encoder for the format; the others need one registered at runtime
     /// ([`register_format_probe`]).
     pub fn has_builtin_encoder(self) -> bool {
-        !matches!(self, Format::Hevc | Format::Av1)
+        self != Format::Hevc
     }
     /// Sound without picture: Waveform Audio, AIFF, AAC Audio, MP3 and FLAC.
     pub fn is_audio_only(self) -> bool {
@@ -218,14 +226,23 @@ impl Format {
     pub fn is_mp4_video(self) -> bool {
         matches!(self, Format::H264 | Format::Hevc | Format::Av1)
     }
+    /// A video format set up with bitrate controls: H.264, H.265, AV1 or WebM (VP9).
+    pub fn is_bitrate_video(self) -> bool {
+        self.is_mp4_video() || self == Format::Webm
+    }
+    /// Sound in Opus (48 kHz, mono or stereo): WebM and AV1.
+    pub fn has_opus_audio(self) -> bool {
+        matches!(self, Format::Av1 | Format::Webm)
+    }
     /// Whether the file is MPEG-4 rather than QuickTime for `mux`.
     pub fn is_mp4_with(self, mux: Multiplexer) -> bool {
         self == Format::Av1 || (self.is_h26x() && mux == Multiplexer::Mp4)
     }
-    pub const ALL: [Format; 22] = [
+    pub const ALL: [Format; 23] = [
         Format::H264,
         Format::Hevc,
         Format::Av1,
+        Format::Webm,
         Format::ProRes,
         Format::DnxHr,
         Format::Apv,
@@ -496,7 +513,7 @@ impl ExportSettings {
         }
         let sample_format = self.audio.sample_format();
         if (self.has_audio() || self.format.is_audio_only())
-            && !matches!(self.audio_codec(), AudioCodec::Aac | AudioCodec::Mp3)
+            && !matches!(self.audio_codec(), AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Opus)
             && !self.supports_sample_format(sample_format)
         {
             let codec = if self.audio_codec() == AudioCodec::Flac { "FLAC" } else { self.format.label() };
@@ -512,12 +529,18 @@ impl ExportSettings {
         if self.format == Format::Av1 && self.bitrate_mode == BitrateMode::Vbr2Pass {
             return Err(ExportError::Unsupported("AV1 export has no two-pass mode: choose CBR or VBR, 1 pass".into()));
         }
+        if self.format == Format::Webm && self.bitrate_mode == BitrateMode::Vbr2Pass {
+            return Err(ExportError::Unsupported("WebM export has no two-pass mode: choose CBR or VBR, 1 pass".into()));
+        }
         if self.bitrate_mode == BitrateMode::Crf {
             if self.format == Format::Hevc {
                 return Err(ExportError::Unsupported("H.265 export has no CRF mode: choose CBR or VBR, 1 pass".into()));
             }
             if self.format == Format::Av1 {
                 return Err(ExportError::Unsupported("AV1 export has no CRF mode: choose CBR or VBR, 1 pass".into()));
+            }
+            if self.format == Format::Webm {
+                return Err(ExportError::Unsupported("WebM export has no CRF mode: choose CBR or VBR, 1 pass".into()));
             }
             if !self.crf.is_finite() || !(0.0..=51.0).contains(&self.crf) {
                 return Err(ExportError::Unsupported("CRF must be between 0 and 51".into()));

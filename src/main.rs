@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 /// media file named (`run splicy-studio @talk.webm @talk.words`) is imported, the first
 /// gets a sequence of its own, and a `.words` transcript (`START_MS END_MS WORD` lines,
 /// Splicy's format) becomes that clip's transcript, which the Text panel's
-/// Transcript tab edits: select words, then extract (ripple delete) or lift.
+/// Transcript tab edits: select words, then extract (ripple delete) or lift. `--export=` options
+/// ([`exports`]) then export the sequence before the window opens.
 fn session() -> Session {
     let mut session = Session::default();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -26,6 +27,7 @@ fn session() -> Session {
             Ok(_) => say("[splicy.studio.demo] opened"),
             Err(e) => say(&format!("[splicy.studio.demo.failed] {e}")),
         }
+        exports(&mut session, &args);
         return session;
     }
     let media: Vec<&String> = args.iter().filter(|a| !a.starts_with("--") && !a.ends_with(".words") && !a.ends_with(".png") && a.parse::<usize>().is_err()).collect();
@@ -57,7 +59,32 @@ fn session() -> Session {
             Err(e) => say(&format!("[splicy.studio.transcript.failed] {words}: {e}")),
         }
     }
+    exports(&mut session, &args);
     session
+}
+
+/// `--export=FORMAT:FILE[:SECONDS]` (any number of them): export the sequence's first SECONDS
+/// (default 2) as FORMAT (`webm`, `av1`, `h264`, `wav`...) before the window opens, the way the
+/// Export panel does, and say what was written. Gates and scripts use it.
+fn exports(session: &mut Session, args: &[String]) {
+    for spec in args.iter().filter_map(|a| a.strip_prefix("--export=")) {
+        let mut parts = spec.splitn(3, ':');
+        let (Some(format), Some(path)) = (parts.next(), parts.next()) else {
+            say(&format!("[splicy.studio.export.failed] {spec}: use --export=FORMAT:FILE[:SECONDS]"));
+            continue;
+        };
+        let seconds: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+        let start = std::time::Instant::now();
+        let request = json!({ "path": path, "format": format, "range": "custom", "startSeconds": 0, "endSeconds": seconds, "wait": true });
+        match session.execute("file.exportMedia", request) {
+            Ok(r) if r["result"].is_object() => {
+                let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                say(&format!("[splicy.studio.export] format={format} file={path} bytes={bytes} ms={}", start.elapsed().as_millis()));
+            }
+            Ok(r) => say(&format!("[splicy.studio.export.failed] format={format} file={path}: {r}")),
+            Err(e) => say(&format!("[splicy.studio.export.failed] format={format} file={path}: {e}")),
+        }
+    }
 }
 
 /// Splicy's `.words` lines as an engine transcript (times in the engine's ticks).
