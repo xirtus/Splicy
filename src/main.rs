@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 /// media file named (`run splicy-studio @talk.webm @talk.words`) is imported, the first
 /// gets a sequence of its own, and a `.words` transcript (`START_MS END_MS WORD` lines,
 /// Splicy's format) becomes that clip's transcript, which the Text panel's
-/// Transcript tab edits: select words, then extract (ripple delete) or lift. `--export=` options
+/// Transcript tab edits: select words, then extract (ripple delete) or lift. `--clean-up` removes
+/// restarts and filler words. `--export=` options
 /// ([`exports`]) then export the sequence before the window opens.
 fn session() -> Session {
     let mut session = Session::default();
@@ -59,12 +60,31 @@ fn session() -> Session {
             Err(e) => say(&format!("[splicy.studio.transcript.failed] {words}: {e}")),
         }
     }
+    if args.iter().any(|a| a == "--clean-up") {
+        clean_up(&mut session);
+    }
     exports(&mut session, &args);
     session
 }
 
+/// `--clean-up`: the Text panel's Remove Restarts (phrases said twice, the first saying goes)
+/// then Remove Filler Words, as one would click them, reporting what each took out.
+fn clean_up(session: &mut Session) {
+    let found = session.execute("transcript.findRestarts", json!({})).map(|r| r["restarts"].as_array().map_or(0, Vec::len));
+    for (cmd, what) in [("transcript.removeRestarts", "restarts"), ("transcript.removeFillers", "fillers")] {
+        match session.execute(cmd, json!({})) {
+            Ok(r) => say(&format!("[splicy.studio.cleanup] {what}={} ticks={}", r["removed"], r["ticks"])),
+            Err(e) => say(&format!("[splicy.studio.cleanup.failed] {what}: {e}")),
+        }
+    }
+    match found {
+        Ok(n) => say(&format!("[splicy.studio.cleanup] found_restarts={n}")),
+        Err(e) => say(&format!("[splicy.studio.cleanup.failed] find: {e}")),
+    }
+}
+
 /// `--export=FORMAT:FILE[:SECONDS]` (any number of them): export the sequence's first SECONDS
-/// (default 2) as FORMAT (`webm`, `av1`, `h264`, `wav`...) before the window opens, the way the
+/// (default 2, `all` for the whole sequence) as FORMAT (`webm`, `av1`, `h264`, `wav`...) before the window opens, the way the
 /// Export panel does, and say what was written. Gates and scripts use it.
 fn exports(session: &mut Session, args: &[String]) {
     for spec in args.iter().filter_map(|a| a.strip_prefix("--export=")) {
@@ -73,9 +93,14 @@ fn exports(session: &mut Session, args: &[String]) {
             say(&format!("[splicy.studio.export.failed] {spec}: use --export=FORMAT:FILE[:SECONDS]"));
             continue;
         };
-        let seconds: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(2.0);
         let start = std::time::Instant::now();
-        let request = json!({ "path": path, "format": format, "range": "custom", "startSeconds": 0, "endSeconds": seconds, "wait": true });
+        let request = match parts.next() {
+            Some("all") => json!({ "path": path, "format": format, "range": "entire", "wait": true }),
+            seconds => {
+                let seconds: f64 = seconds.and_then(|s| s.parse().ok()).unwrap_or(2.0);
+                json!({ "path": path, "format": format, "range": "custom", "startSeconds": 0, "endSeconds": seconds, "wait": true })
+            }
+        };
         match session.execute("file.exportMedia", request) {
             Ok(r) if r["result"].is_object() => {
                 let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);

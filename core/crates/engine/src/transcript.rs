@@ -405,6 +405,29 @@ fn remove_fillers(s: &mut Session, p: &Value) -> Result<Value> {
     remove_ranges(s, "Remove Filler Words", ranges)
 }
 
+/// Phrases said twice within a moment (restarts and retakes, after Scarlet), for review: each
+/// with its first saying's words (`from`..=`to`, everything before the second saying) and the
+/// second saying's first word (`next`).
+fn find_restarts(s: &mut Session, _: &Value) -> Result<Value> {
+    let words = sequence_words(s);
+    let quote = |a: usize, b: usize| words[a..b].iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+    let list: Vec<Value> = tx::find_restarts(&words)
+        .into_iter()
+        .map(|r| {
+            let again = r.again.unwrap_or(r.length);
+            json!({"from": r.at, "to": r.next - 1, "next": r.next, "first": quote(r.at, r.at + r.length), "second": quote(r.next, (r.next + again).min(words.len())), "start": words[r.at].start.0, "end": words[r.next].start.0})
+        })
+        .collect();
+    Ok(json!({"restarts": list}))
+}
+
+/// Remove every restart's first saying, so the second plays (Text panel ▸ Remove Restarts).
+fn remove_restarts(s: &mut Session, _: &Value) -> Result<Value> {
+    let words = sequence_words(s);
+    let ranges = tx::restart_ranges(&words, &tx::find_restarts(&words), s.sequence_rate());
+    remove_ranges(s, "Remove Restarts", ranges)
+}
+
 fn create_captions(s: &mut Session, p: &Value) -> Result<Value> {
     let words = sequence_words(s);
     let d = CaptionRules::default();
@@ -510,6 +533,8 @@ pub fn commands() -> Vec<CommandSpec> {
             true,
         ),
         spec("transcript.removeFillers", "Remove Filler Words", &["Sequence", "Transcript"], r#"{"fillers":[str]?}"#, has_transcript, remove_fillers, true),
+        spec("transcript.findRestarts", "Find Restarts", &[], "{}", has_transcript, find_restarts, false),
+        spec("transcript.removeRestarts", "Remove Restarts", &["Sequence", "Transcript"], "{}", has_transcript, remove_restarts, true),
         spec(
             "transcript.createCaptions",
             "Create Captions from Transcript…",

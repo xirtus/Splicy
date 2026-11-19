@@ -31,6 +31,8 @@ SexOS's CI boots the program in QEMU (`scripts/program_splicy_studio_gate.py`).
 ## Licence
 
 Splicy's own code is GPL-3.0-only (`LICENSE`). The code in `core/` stays under its
-MIT OR Apache-2.0 licence, as its licence files say.
+MIT OR Apache-2.0 licence, as its licence files say. Remove Restarts
+(`core/crates/edit/src/transcript/restarts.rs`) is adapted from Scarlet
+(github.com/Forward-Future/scarlet), used under the MIT licence in `core/LICENSE-SCARLET-MIT`.
 
 Earlier history: the commits under `apps/splicy-studio` in xirtus/sexos up to this import.

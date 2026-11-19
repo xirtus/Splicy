@@ -12,7 +12,7 @@
 //!
 //! Text edits turn word ranges into timeline ranges ([`word_range`]) snapped outward to frames, then
 //! reuse the ordinary [`crate::extract`] / [`crate::lift`] edits. Pause and filler-word removal
-//! ([`find_pauses`], [`find_fillers`]) produce many ranges that [`ripple_delete_ranges`] removes in
+//! ([`find_pauses`], [`find_fillers`]) and restarts ([`find_restarts`], adapted from Scarlet) produce many ranges that [`ripple_delete_ranges`] removes in
 //! one pass, right to left. Captions come from [`caption_blocks`].
 
 use std::collections::BTreeMap;
@@ -22,6 +22,9 @@ use filmcraft_project::{Caption, ClipId, ItemId, Sequence, TrackId, Transcript};
 use filmcraft_time::{FrameRate, TICKS_PER_SECOND, Tick, TimeRange};
 
 use crate::EditCtx;
+
+mod restarts;
+pub use restarts::{RESTART_WITHIN_SECONDS, RESTART_WITHIN_WORDS, Restart, find_restarts, restart_key, restart_ranges};
 
 /// A word of the sequence transcript.
 #[derive(Clone, Debug, PartialEq)]
