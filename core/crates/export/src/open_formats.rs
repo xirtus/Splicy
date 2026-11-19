@@ -179,7 +179,8 @@ impl AudioEncoder for OpusAudio {
             for c in 0..self.channels {
                 // mono export of a stereo mix, or the reverse: take what there is
                 let s = planar.get(c).or(planar.first()).and_then(|p| p.get(i)).copied().unwrap_or(0.0);
-                self.held.push(s.clamp(-1.0, 1.0));
+                // a NaN from a broken source must not reach the range coder
+                self.held.push(if s.is_finite() { s.clamp(-1.0, 1.0) } else { 0.0 });
             }
         }
         self.given += n as u64;
